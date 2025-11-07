@@ -1,0 +1,10 @@
+{
+  "name": "kycaid-testing-app",
+  "version": "1.0.0",
+  "description": "KYCAID Testing Application - Full Stack",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build"
+  },
+  "private": true
+}
+
