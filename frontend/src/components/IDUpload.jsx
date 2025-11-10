@@ -331,6 +331,7 @@ function IDUpload({ onExtractionComplete }) {
           onClick={handleUploadAndExtract}
           disabled={loading || !selectedFile}
           className="submit-button"
+          style={{ marginTop: '20px' }}
         >
           {loading ? 'Processing...' : 'Upload & Extract Data'}
         </button>
