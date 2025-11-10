@@ -226,6 +226,111 @@ app.get('/api/countries', async (req, res) => {
   }
 });
 
+// Document recognition service
+app.post('/api/services/document-recognition', async (req, res) => {
+  try {
+    const { file_id, document_type } = req.body;
+    
+    if (!file_id || !document_type) {
+      return res.status(400).json({
+        error: { message: 'file_id and document_type are required' }
+      });
+    }
+
+    // Try to use KYCAID's identity document recognition service
+    // If the service endpoint exists, use it directly
+    try {
+      const serviceData = {
+        file_id: file_id,
+        type: document_type
+      };
+      
+      // Try the identity document recognition service endpoint
+      const recognitionData = await kycaidRequest('POST', '/services/identity-document-recognition', serviceData, {
+        'Content-Type': 'application/json'
+      });
+      
+      res.json(recognitionData);
+    } catch (serviceError) {
+      // If service endpoint doesn't exist, use alternative: create document and retrieve it
+      // This will trigger OCR processing
+      try {
+        // Create a temporary applicant for document creation (if needed)
+        // Or create document directly with file_id
+        const documentData = {
+          type: document_type,
+          front_side_id: file_id
+        };
+        
+        // Note: This requires an applicant_id, so we might need to create a temporary one
+        // For now, we'll try to get extracted data from the document after creation
+        // Alternative: Use GET /documents/{id} after creation to get extracted data
+        
+        // Since we don't have applicant_id here, we'll use a different approach:
+        // Call the service endpoint with just the file_id
+        // If that fails, return an error suggesting the file needs to be processed differently
+        
+        res.status(serviceError.response?.status || 500).json({
+          error: {
+            message: 'Document recognition service not available. Please create document with applicant first.',
+            details: serviceError.response?.data || serviceError.message
+          }
+        });
+      } catch (altError) {
+        res.status(altError.response?.status || 500).json({
+          error: altError.response?.data || { message: altError.message }
+        });
+      }
+    }
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
+// Face verification service
+app.post('/api/services/face-verification', async (req, res) => {
+  try {
+    const { selfie_file_id, id_file_id } = req.body;
+    
+    if (!selfie_file_id || !id_file_id) {
+      return res.status(400).json({
+        error: { message: 'selfie_file_id and id_file_id are required' }
+      });
+    }
+
+    // Call KYCAID's face verification/liveness service
+    try {
+      const verificationData = {
+        selfie_file_id: selfie_file_id,
+        id_file_id: id_file_id
+      };
+      
+      // Try the face verification service endpoint
+      const result = await kycaidRequest('POST', '/services/face-verification', verificationData, {
+        'Content-Type': 'application/json'
+      });
+      
+      res.json(result);
+    } catch (serviceError) {
+      // If direct service endpoint doesn't exist, try alternative approach
+      // KYCAID might handle face verification through the verification creation process
+      // or through a different endpoint structure
+      res.status(serviceError.response?.status || 500).json({
+        error: {
+          message: 'Face verification service not available. Please check KYCAID API documentation.',
+          details: serviceError.response?.data || serviceError.message
+        }
+      });
+    }
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || { message: error.message }
+    });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', mode: currentMode });

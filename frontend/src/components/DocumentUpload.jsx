@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
 
-function DocumentUpload({ applicantId, fileIds, setFileIds, documentIds, setDocumentIds, onNext }) {
+function DocumentUpload({ applicantId, fileIds, setFileIds, documentIds, setDocumentIds, onNext, onSkip }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
@@ -86,7 +86,8 @@ function DocumentUpload({ applicantId, fileIds, setFileIds, documentIds, setDocu
 
   return (
     <div className="form-container">
-      <h2>Upload Documents</h2>
+      <h2>Upload Additional Documents (Optional)</h2>
+      <p className="form-hint">Your ID has already been uploaded. You can upload additional documents here if needed, or skip this step.</p>
       
       <div className="document-upload-form">
         <div className="form-group">
@@ -172,12 +173,19 @@ function DocumentUpload({ applicantId, fileIds, setFileIds, documentIds, setDocu
         )}
 
         <div className="button-group">
+          {onSkip && (
+            <button
+              onClick={onSkip}
+              className="back-button"
+            >
+              Skip This Step →
+            </button>
+          )}
           <button
             onClick={onNext}
-            disabled={documentIds.length === 0}
             className="next-button"
           >
-            Continue to Address →
+            Continue to Verification →
           </button>
         </div>
       </div>
