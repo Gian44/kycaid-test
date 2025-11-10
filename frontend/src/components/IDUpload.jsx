@@ -1,6 +1,23 @@
 import { useState } from 'react'
 import axios from 'axios'
 
+// Map user-friendly ID types to KYCAID document types
+const ID_TYPE_MAPPING = {
+  'DRIVERS': 'DRIVERS',
+  'ID_CARD': 'ID_CARD',
+  'PASSPORT': 'PASSPORT',
+  'PASSPORT_CARD': 'ID_CARD', // Passport card maps to ID_CARD
+  'REAL_ID_DL': 'DRIVERS', // Real ID Driver's License
+  'REAL_ID_CARD': 'ID_CARD', // Real ID State ID Card
+  'EDL': 'DRIVERS', // Enhanced Driver's License
+  'MILITARY_ID': 'ID_CARD', // Military ID
+  'GREEN_CARD': 'RESIDENCE_PERMIT', // Permanent Resident Card
+  'EAD': 'RESIDENCE_PERMIT', // Employment Authorization Document
+  'TRIBAL_ID': 'ID_CARD', // Tribal ID
+  'CITIZENSHIP_CERT': 'ID_CARD', // US Citizenship Certificate
+  'NATURALIZATION_CERT': 'ID_CARD' // US Naturalization Certificate
+}
+
 function IDUpload({ onExtractionComplete }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -44,12 +61,15 @@ function IDUpload({ onExtractionComplete }) {
       setIdFileId(fileId)
 
       // Step 2: Extract data using document recognition
+      // Map the selected ID type to KYCAID document type
+      const kycaidDocumentType = ID_TYPE_MAPPING[documentType] || documentType
+      
       // Note: KYCAID might require creating a document first to extract data
       // For now, we'll try the service endpoint, but may need to create a temporary applicant
       try {
         const recognitionResponse = await axios.post('/api/services/document-recognition', {
           file_id: fileId,
-          document_type: documentType
+          document_type: kycaidDocumentType
         })
 
         // If we get extracted data, use it
@@ -58,7 +78,8 @@ function IDUpload({ onExtractionComplete }) {
           onExtractionComplete({
             extractedData: recognitionResponse.data,
             idFileId: fileId,
-            documentType: documentType
+            documentType: kycaidDocumentType,
+            originalDocumentType: documentType
           })
         }
       } catch (recognitionError) {
@@ -71,7 +92,8 @@ function IDUpload({ onExtractionComplete }) {
         onExtractionComplete({
           extractedData: null,
           idFileId: fileId,
-          documentType: documentType,
+          documentType: kycaidDocumentType,
+          originalDocumentType: documentType,
           needsDocumentCreation: true
         })
       }
@@ -96,9 +118,29 @@ function IDUpload({ onExtractionComplete }) {
             onChange={(e) => setDocumentType(e.target.value)}
             disabled={loading}
           >
-            <option value="DRIVERS">US Driver's License</option>
-            <option value="ID_CARD">US ID Card</option>
-            <option value="PASSPORT">US Passport</option>
+            <optgroup label="Driver's Licenses">
+              <option value="DRIVERS">US Driver's License</option>
+              <option value="REAL_ID_DL">Real ID Driver's License</option>
+              <option value="EDL">Enhanced Driver's License (EDL)</option>
+            </optgroup>
+            <optgroup label="State ID Cards">
+              <option value="ID_CARD">US State ID Card</option>
+              <option value="REAL_ID_CARD">Real ID State ID Card</option>
+            </optgroup>
+            <optgroup label="Passports">
+              <option value="PASSPORT">US Passport</option>
+              <option value="PASSPORT_CARD">US Passport Card</option>
+            </optgroup>
+            <optgroup label="Immigration Documents">
+              <option value="GREEN_CARD">Permanent Resident Card (Green Card)</option>
+              <option value="EAD">Employment Authorization Document (EAD)</option>
+            </optgroup>
+            <optgroup label="Other Government IDs">
+              <option value="MILITARY_ID">US Military ID</option>
+              <option value="TRIBAL_ID">Tribal ID</option>
+              <option value="CITIZENSHIP_CERT">US Citizenship Certificate</option>
+              <option value="NATURALIZATION_CERT">US Naturalization Certificate</option>
+            </optgroup>
           </select>
           <small className="form-hint">Select the type of ID you're uploading</small>
         </div>
