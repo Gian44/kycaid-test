@@ -45,16 +45,16 @@ function App() {
             1. Upload ID & Extract Data
           </div>
           <div className={`step ${currentStep >= 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}>
-            2. Face Verification
+            2. Capture Selfie
           </div>
           <div className={`step ${currentStep >= 3 ? 'active' : ''} ${currentStep > 3 ? 'completed' : ''}`}>
-            3. Review Applicant Info
+            3. Review Your Information
           </div>
           <div className={`step ${currentStep >= 4 ? 'active' : ''} ${currentStep > 4 ? 'completed' : ''}`}>
-            4. Upload Additional Documents
+            4. Additional Documents (Optional)
           </div>
           <div className={`step ${currentStep >= 5 ? 'active' : ''} ${currentStep > 5 ? 'completed' : ''}`}>
-            5. Verify
+            5. Complete Verification
           </div>
         </div>
 
@@ -79,12 +79,13 @@ function App() {
             />
           )}
 
-          {currentStep === 3 && idExtractionData && (
+          {currentStep === 3 && idExtractionData && faceVerificationData && (
             <>
               <ApplicantForm
                 initialData={idExtractionData.extractedData}
                 idFileId={idExtractionData.idFileId}
                 documentType={idExtractionData.documentType}
+                selfieFileId={faceVerificationData.selfieFileId}
                 onSuccess={(id, addrId) => {
                   setApplicantId(id)
                   if (addrId) setAddressId(addrId)

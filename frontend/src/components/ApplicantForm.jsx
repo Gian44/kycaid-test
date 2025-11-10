@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 
-function ApplicantForm({ onSuccess, initialData, idFileId, documentType }) {
+function ApplicantForm({ onSuccess, initialData, idFileId, documentType, selfieFileId }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [formData, setFormData] = useState({
@@ -48,6 +48,8 @@ function ApplicantForm({ onSuccess, initialData, idFileId, documentType }) {
   // Map OCR data to form fields
   useEffect(() => {
     if (initialData) {
+      console.log('Initial data received in ApplicantForm:', initialData)
+      
       const mappedData = {
         first_name: initialData.first_name || initialData.firstName || '',
         last_name: initialData.last_name || initialData.lastName || '',
@@ -57,6 +59,7 @@ function ApplicantForm({ onSuccess, initialData, idFileId, documentType }) {
         phone: initialData.phone || initialData.phone_number || ''
       }
       
+      console.log('Mapped form data:', mappedData)
       setFormData(prev => ({ ...prev, ...mappedData }))
 
       // Handle address if available
@@ -109,13 +112,30 @@ function ApplicantForm({ onSuccess, initialData, idFileId, documentType }) {
       let addressId = null
       if (hasAddress && (addressData.street_name || addressData.city)) {
         try {
-          const addressResponse = await axios.post('/api/addresses', {
+          // Only include address fields that have values
+          const addressPayload = {
             applicant_id: applicantId,
-            ...addressData
-          })
+            type: 'REGISTERED'
+          }
+          
+          // Only add fields that have values to avoid validation errors
+          if (addressData.country) addressPayload.country = addressData.country
+          if (addressData.state_or_province) addressPayload.state_or_province = addressData.state_or_province
+          if (addressData.city) addressPayload.city = addressData.city
+          if (addressData.postal_code) addressPayload.postal_code = addressData.postal_code
+          if (addressData.street_name && addressData.street_name.trim()) {
+            addressPayload.street_name = addressData.street_name.trim()
+          }
+          if (addressData.building_number) addressPayload.building_number = addressData.building_number
+          
+          console.log('Creating address with payload:', addressPayload)
+          
+          const addressResponse = await axios.post('/api/addresses', addressPayload)
           addressId = addressResponse.data.address_id
+          console.log('Address created successfully:', addressId)
         } catch (addrErr) {
-          console.warn('Failed to create address:', addrErr)
+          console.error('Failed to create address:', addrErr)
+          console.error('Address error details:', addrErr.response?.data)
           // Don't fail the whole process if address creation fails
         }
       }
@@ -123,14 +143,34 @@ function ApplicantForm({ onSuccess, initialData, idFileId, documentType }) {
       // Create document with the uploaded ID file if available
       if (idFileId) {
         try {
+          // Ensure we're using valid KYCAID document types
+          // Valid types: GOVERNMENT_ID, PASSPORT, DRIVERS_LICENSE, PERMANENT_RESIDENCE_PERMIT
+          const validTypes = ['DRIVERS_LICENSE', 'GOVERNMENT_ID', 'PASSPORT', 'PERMANENT_RESIDENCE_PERMIT'];
+          const docType = validTypes.includes(documentType) ? documentType : 'GOVERNMENT_ID'
+          console.log('Creating ID document with type:', docType)
+          
           await axios.post('/api/documents', {
             applicant_id: applicantId,
-            type: documentType || 'DRIVERS',
+            type: docType,
             front_side_id: idFileId
           })
         } catch (docErr) {
-          console.warn('Failed to create document:', docErr)
+          console.warn('Failed to create ID document:', docErr)
           // Don't fail the whole process if document creation fails
+        }
+      }
+
+      // Create SELFIE document with the uploaded selfie if available
+      if (selfieFileId) {
+        try {
+          await axios.post('/api/documents', {
+            applicant_id: applicantId,
+            type: 'SELFIE',
+            front_side_id: selfieFileId
+          })
+        } catch (selfieErr) {
+          console.warn('Failed to create selfie document:', selfieErr)
+          // Don't fail the whole process if selfie document creation fails
         }
       }
 

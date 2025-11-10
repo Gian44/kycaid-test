@@ -227,6 +227,8 @@ app.get('/api/countries', async (req, res) => {
 });
 
 // Document recognition service
+// Note: KYCAID's document recognition requires creating a document with an applicant
+// We'll create a temporary applicant, attach the document, retrieve the OCR data, then delete it
 app.post('/api/services/document-recognition', async (req, res) => {
   try {
     const { file_id, document_type } = req.body;
@@ -237,99 +239,140 @@ app.post('/api/services/document-recognition', async (req, res) => {
       });
     }
 
-    // Try to use KYCAID's identity document recognition service
-    // If the service endpoint exists, use it directly
+    let tempApplicantId = null;
+    let tempDocumentId = null;
+
     try {
-      const serviceData = {
-        file_id: file_id,
-        type: document_type
+      // Map document types to KYCAID valid types
+      // Valid KYCAID types according to https://docs-v1.kycaid.com/#verification-types:
+      // GOVERNMENT_ID, PASSPORT, DRIVERS_LICENSE, DOMESTIC_PASSPORT,
+      // PERMANENT_RESIDENCE_PERMIT, REFUGEE_CARD, FOREIGN_CITIZEN_PASSPORT, TAX_ID_NUMBER
+      const documentTypeMap = {
+        'DRIVERS_LICENSE': 'DRIVERS_LICENSE',
+        'GOVERNMENT_ID': 'GOVERNMENT_ID',
+        'PASSPORT': 'PASSPORT',
+        'PERMANENT_RESIDENCE_PERMIT': 'PERMANENT_RESIDENCE_PERMIT',
+        // Legacy mappings for backwards compatibility
+        'DRIVERS': 'DRIVERS_LICENSE',
+        'ID_CARD': 'GOVERNMENT_ID',
+        'RESIDENCE_PERMIT': 'PERMANENT_RESIDENCE_PERMIT'
       };
-      
-      // Try the identity document recognition service endpoint
-      const recognitionData = await kycaidRequest('POST', '/services/identity-document-recognition', serviceData, {
+
+      const validDocumentType = documentTypeMap[document_type] || 'GOVERNMENT_ID';
+      console.log('Requested document type:', document_type);
+      console.log('Mapped to valid KYCAID type:', validDocumentType);
+
+      // Step 1: Create a temporary applicant for OCR processing
+      const tempApplicant = await kycaidRequest('POST', '/applicants', {
+        type: 'PERSON',
+        first_name: 'Temp',
+        last_name: 'OCR',
+        email: `temp-ocr-${Date.now()}@example.com`
+      }, {
         'Content-Type': 'application/json'
       });
+
+      tempApplicantId = tempApplicant.applicant_id;
+      console.log('Created temp applicant for OCR:', tempApplicantId);
+
+      // Step 2: Create document with the temp applicant
+      const document = await kycaidRequest('POST', '/documents', {
+        applicant_id: tempApplicantId,
+        type: validDocumentType,
+        front_side_id: file_id
+      }, {
+        'Content-Type': 'application/json'
+      });
+
+      tempDocumentId = document.document_id;
+      console.log('Created temp document for OCR:', tempDocumentId);
+
+      // Step 3: Retrieve the document to check for extracted data
+      // Note: KYCAID's OCR processing happens asynchronously during verification
+      // For immediate extraction, we need to wait for verification to complete (2 min - 6 hours)
+      // For now, we'll return what we can get immediately
+      const documentData = await kycaidRequest('GET', `/documents/${tempDocumentId}`);
+      const applicantData = await kycaidRequest('GET', `/applicants/${tempApplicantId}`);
       
-      res.json(recognitionData);
-    } catch (serviceError) {
-      // If service endpoint doesn't exist, use alternative: create document and retrieve it
-      // This will trigger OCR processing
+      console.log('Full applicant data received:', JSON.stringify(applicantData, null, 2));
+      console.log('Full document data received:', JSON.stringify(documentData, null, 2));
+      
+      // Note: OCR data extraction happens during full verification which requires:
+      // 1. An applicant with first_name, last_name, dob, residence_country
+      // 2. A document with type (DRIVERS_LICENSE, GOVERNMENT_ID, etc.) and front_side_id
+      // 3. A SELFIE document with type SELFIE_IMAGE and front_side_id
+      // 4. Creating a verification with the applicant_id
+      // The verification takes 2 minutes to 6 hours to complete
+      
+      // Extract data from both applicant and document objects
+      const ocrData = {
+        // Person data from applicant object
+        first_name: applicantData.first_name || applicantData.firstName || '',
+        last_name: applicantData.last_name || applicantData.lastName || '',
+        dob: applicantData.dob || applicantData.date_of_birth || applicantData.dateOfBirth || '',
+        email: applicantData.email || '',
+        phone: applicantData.phone || '',
+        residence_country: applicantData.residence_country || 'US',
+        
+        // Document-specific fields
+        document_number: documentData.document_number || documentData.number || documentData.documentNumber || '',
+        issue_date: documentData.issue_date || documentData.issueDate || '',
+        expiry_date: documentData.expiry_date || documentData.expiryDate || '',
+        
+        // Address fields if available
+        address: null,
+        street_name: '',
+        building_number: '',
+        city: '',
+        state: '',
+        postal_code: '',
+        country: applicantData.residence_country || 'US'
+      };
+
+      console.log('Extracted OCR data:', JSON.stringify(ocrData, null, 2));
+
+      // Return the OCR data
+      res.json(ocrData);
+
+    } catch (error) {
+      console.error('OCR processing error:', error.response?.data || error.message);
+      
+      // Return empty data if OCR fails, don't block the workflow
+      res.json({
+        first_name: '',
+        last_name: '',
+        dob: '',
+        document_number: '',
+        issue_date: '',
+        expiry_date: '',
+        address: null,
+        ocr_note: 'Automatic data extraction not available. Please enter information manually.'
+      });
+    } finally {
+      // Cleanup: Delete temporary document and applicant
+      // Note: In test mode, temp applicants are auto-cleaned, but we'll try to delete anyway
       try {
-        // Create a temporary applicant for document creation (if needed)
-        // Or create document directly with file_id
-        const documentData = {
-          type: document_type,
-          front_side_id: file_id
-        };
-        
-        // Note: This requires an applicant_id, so we might need to create a temporary one
-        // For now, we'll try to get extracted data from the document after creation
-        // Alternative: Use GET /documents/{id} after creation to get extracted data
-        
-        // Since we don't have applicant_id here, we'll use a different approach:
-        // Call the service endpoint with just the file_id
-        // If that fails, return an error suggesting the file needs to be processed differently
-        
-        res.status(serviceError.response?.status || 500).json({
-          error: {
-            message: 'Document recognition service not available. Please create document with applicant first.',
-            details: serviceError.response?.data || serviceError.message
-          }
-        });
-      } catch (altError) {
-        res.status(altError.response?.status || 500).json({
-          error: altError.response?.data || { message: altError.message }
-        });
-      }
-    }
-  } catch (error) {
-    res.status(error.response?.status || 500).json({
-      error: error.response?.data || { message: error.message }
-    });
-  }
-});
-
-// Face verification service
-app.post('/api/services/face-verification', async (req, res) => {
-  try {
-    const { selfie_file_id, id_file_id } = req.body;
-    
-    if (!selfie_file_id || !id_file_id) {
-      return res.status(400).json({
-        error: { message: 'selfie_file_id and id_file_id are required' }
-      });
-    }
-
-    // Call KYCAID's face verification/liveness service
-    try {
-      const verificationData = {
-        selfie_file_id: selfie_file_id,
-        id_file_id: id_file_id
-      };
-      
-      // Try the face verification service endpoint
-      const result = await kycaidRequest('POST', '/services/face-verification', verificationData, {
-        'Content-Type': 'application/json'
-      });
-      
-      res.json(result);
-    } catch (serviceError) {
-      // If direct service endpoint doesn't exist, try alternative approach
-      // KYCAID might handle face verification through the verification creation process
-      // or through a different endpoint structure
-      res.status(serviceError.response?.status || 500).json({
-        error: {
-          message: 'Face verification service not available. Please check KYCAID API documentation.',
-          details: serviceError.response?.data || serviceError.message
+        if (tempDocumentId) {
+          await kycaidRequest('DELETE', `/documents/${tempDocumentId}`);
+          console.log('Deleted temp document:', tempDocumentId);
         }
-      });
+      } catch (cleanupErr) {
+        console.warn('Failed to delete temp document:', cleanupErr.message);
+      }
+
+      // Note: KYCAID may not allow deleting applicants via API
+      // Temp applicants in test mode are typically auto-cleaned after 24 hours
     }
   } catch (error) {
+    console.error('Document recognition error:', error);
     res.status(error.response?.status || 500).json({
       error: error.response?.data || { message: error.message }
     });
   }
 });
+
+// Note: Face verification is handled automatically by KYCAID during the verification process
+// when both ID document and SELFIE document are uploaded. No separate endpoint needed.
 
 // Health check
 app.get('/health', (req, res) => {

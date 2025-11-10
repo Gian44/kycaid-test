@@ -6,6 +6,16 @@ function VerificationPanel({ applicantId, verificationId, setVerificationId, onB
   const [error, setError] = useState(null)
   const [verification, setVerification] = useState(null)
   const [polling, setPolling] = useState(false)
+  const [autoVerified, setAutoVerified] = useState(false)
+
+  // Auto-trigger verification when component mounts (if not already verified)
+  useEffect(() => {
+    if (!verificationId && !autoVerified && applicantId) {
+      console.log('Auto-triggering verification...')
+      setAutoVerified(true)
+      createVerification()
+    }
+  }, [applicantId, verificationId, autoVerified])
 
   useEffect(() => {
     if (verificationId && !polling) {
@@ -25,16 +35,22 @@ function VerificationPanel({ applicantId, verificationId, setVerificationId, onB
     setError(null)
 
     try {
+      console.log('Creating verification for applicant:', applicantId)
+      
       const response = await axios.post('/api/verifications', {
-        applicant_id: applicantId
+        applicant_id: applicantId,
+        types: ['PERSON']  // Valid KYCAID verification type for identity verification
       })
+
+      console.log('Verification created:', response.data)
 
       if (response.data.verification_id) {
         setVerificationId(response.data.verification_id)
       }
     } catch (err) {
-      setError(err.response?.data?.error?.message || 'Failed to create verification')
       console.error('Error creating verification:', err)
+      console.error('Error details:', err.response?.data)
+      setError(err.response?.data?.error?.message || err.response?.data?.message || 'Failed to create verification')
     } finally {
       setLoading(false)
     }
@@ -78,24 +94,48 @@ function VerificationPanel({ applicantId, verificationId, setVerificationId, onB
 
       {!verificationId ? (
         <div className="verification-create">
-          <p>Ready to verify the applicant's identity?</p>
-          <p className="info-text">
-            This will submit all provided information to KYCAID for verification.
-            The verification process typically takes 2 minutes to 6 hours.
-          </p>
+          <div style={{ 
+            padding: '20px', 
+            textAlign: 'center',
+            backgroundColor: '#e3f2fd',
+            borderRadius: '8px',
+            marginBottom: '20px'
+          }}>
+            <div style={{ 
+              display: 'inline-block',
+              width: '40px',
+              height: '40px',
+              border: '4px solid #1976d2',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              marginBottom: '15px'
+            }} />
+            <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#1976d2', margin: '10px 0' }}>
+              {loading ? 'Starting verification...' : 'Preparing verification...'}
+            </p>
+            <p className="info-text" style={{ marginTop: '10px' }}>
+              Submitting all provided information to KYCAID for verification.
+              The verification process typically takes 2 minutes to 6 hours.
+            </p>
+          </div>
           
-          {error && <div className="error-message">{error}</div>}
+          {error && (
+            <div className="error-message" style={{ marginTop: '20px' }}>
+              <p><strong>Verification Failed:</strong> {error}</p>
+              <button
+                onClick={createVerification}
+                className="submit-button"
+                style={{ marginTop: '15px' }}
+              >
+                Retry Verification
+              </button>
+            </div>
+          )}
 
-          <div className="button-group">
+          <div className="button-group" style={{ marginTop: '20px' }}>
             <button type="button" onClick={onBack} className="back-button">
               ← Back
-            </button>
-            <button
-              onClick={createVerification}
-              disabled={loading}
-              className="submit-button"
-            >
-              {loading ? 'Creating Verification...' : 'Start Verification'}
             </button>
           </div>
         </div>

@@ -7,16 +7,36 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
   const [verificationStatus, setVerificationStatus] = useState(null)
   const [cameraReady, setCameraReady] = useState(false)
   const [capturedImage, setCapturedImage] = useState(null)
+  const [debugInfo, setDebugInfo] = useState([])
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const canvasRef = useRef(null)
+  const initializingRef = useRef(false)
+
+  const addDebugInfo = (message) => {
+    console.log('Camera Debug:', message)
+    setDebugInfo(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`])
+  }
 
   useEffect(() => {
     // Initialize camera when component mounts
-    // Small delay to ensure video element is mounted
+    // Delay to ensure video element ref is set
     const timer = setTimeout(() => {
-      startCamera()
-    }, 100)
+      if (videoRef.current) {
+        addDebugInfo('Video element found, starting camera')
+        startCamera()
+      } else {
+        addDebugInfo('Video element not found, will retry')
+        // Retry after another delay
+        setTimeout(() => {
+          if (videoRef.current) {
+            startCamera()
+          } else {
+            setError('Video element failed to initialize. Please click Retry.')
+          }
+        }, 500)
+      }
+    }, 200)
     
     return () => {
       clearTimeout(timer)
@@ -26,98 +46,110 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
   }, [])
 
   const startCamera = async () => {
+    if (initializingRef.current) {
+      addDebugInfo('Already initializing, skipping...')
+      return
+    }
+
+    initializingRef.current = true
+    addDebugInfo('Starting camera initialization')
+    setError(null)
+    setCameraReady(false)
+    
     try {
       // Stop any existing stream first
       stopCamera()
       
+      addDebugInfo('Requesting camera permission...')
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          facingMode: 'user', // Front-facing camera
+          facingMode: 'user',
           width: { ideal: 640 },
           height: { ideal: 480 }
+        },
+        audio: false
+      })
+      
+      addDebugInfo('Camera permission granted, got stream')
+      streamRef.current = stream
+      
+      // Wait a bit for video element to be ready
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      if (!videoRef.current) {
+        addDebugInfo('ERROR: Video element not found')
+        throw new Error('Video element not available')
+      }
+      
+      const video = videoRef.current
+      addDebugInfo('Setting stream to video element')
+      video.srcObject = stream
+      
+      // Set video attributes
+      video.muted = true
+      video.playsInline = true
+      video.autoplay = true
+      
+      addDebugInfo('Attempting to play video...')
+      
+      // Wait for video to load
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Video load timeout'))
+        }, 5000)
+        
+        video.onloadedmetadata = () => {
+          addDebugInfo('Video metadata loaded')
+          clearTimeout(timeout)
+          resolve()
+        }
+        
+        video.onerror = (e) => {
+          addDebugInfo(`Video error: ${e}`)
+          clearTimeout(timeout)
+          reject(new Error('Video load error'))
         }
       })
       
-      streamRef.current = stream
+      // Play the video
+      addDebugInfo('Playing video...')
+      await video.play()
       
-      if (videoRef.current) {
-        const video = videoRef.current
-        video.srcObject = stream
-        
-        // Try to play immediately
-        video.play()
-          .then(() => {
-            setCameraReady(true)
-          })
-          .catch((playErr) => {
-            console.warn('Initial play failed, waiting for metadata:', playErr)
-            // If immediate play fails, wait for metadata
-            video.onloadedmetadata = () => {
-              if (video) {
-                video.play()
-                  .then(() => {
-                    setCameraReady(true)
-                  })
-                  .catch((err) => {
-                    console.error('Error playing video after metadata:', err)
-                    setError('Unable to start camera video. Please try again.')
-                    setCameraReady(false)
-                  })
-              }
-            }
-          })
-        
-        // Handle video errors
-        video.onerror = (err) => {
-          console.error('Video error:', err)
-          setError('Error displaying camera feed. Please try again.')
-          setCameraReady(false)
-        }
-        
-        // Also listen for canplay event as backup
-        video.oncanplay = () => {
-          if (video && !cameraReady) {
-            video.play()
-              .then(() => setCameraReady(true))
-              .catch(() => {}) // Ignore errors here, already handled above
-          }
-        }
-      } else {
-        // If video ref is not ready, set it up when it becomes available
-        setTimeout(() => {
-          if (videoRef.current && streamRef.current) {
-            const video = videoRef.current
-            video.srcObject = streamRef.current
-            video.play()
-              .then(() => setCameraReady(true))
-              .catch(() => {
-                video.onloadedmetadata = () => {
-                  if (video) {
-                    video.play().then(() => setCameraReady(true))
-                  }
-                }
-              })
-          }
-        }, 100)
-      }
+      addDebugInfo('SUCCESS: Camera is ready!')
+      setCameraReady(true)
+      initializingRef.current = false
+      
     } catch (err) {
+      initializingRef.current = false
       console.error('Error accessing camera:', err)
+      addDebugInfo(`ERROR: ${err.message}`)
+      
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError('Camera permission denied. Please allow camera access and try again.')
+        setError('Camera permission denied. Please allow camera access in your browser settings.')
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setError('No camera found. Please ensure a camera is connected.')
+      } else if (err.message === 'Video load timeout') {
+        setError('Camera is taking too long to start. Please refresh and try again.')
       } else {
-        setError('Unable to access camera. Please ensure camera permissions are granted.')
+        setError(`Camera error: ${err.message}`)
       }
       setCameraReady(false)
     }
   }
 
   const stopCamera = () => {
+    addDebugInfo('Stopping camera')
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current.getTracks().forEach(track => {
+        track.stop()
+        addDebugInfo(`Stopped track: ${track.kind}`)
+      })
       streamRef.current = null
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    initializingRef.current = false
   }
 
   const capturePhoto = () => {
@@ -154,7 +186,7 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
   }
 
   const handleVerification = async () => {
-    if (!capturedImage || !idFileId) {
+    if (!capturedImage) {
       setError('Please capture a photo first')
       return
     }
@@ -162,9 +194,11 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
     setLoading(true)
     setError(null)
     setVerificationStatus(null)
+    addDebugInfo('Starting selfie upload process')
 
     try {
-      // Step 1: Upload selfie
+      // Step 1: Upload selfie file
+      addDebugInfo('Uploading selfie image...')
       const formData = new FormData()
       formData.append('file', capturedImage, 'selfie.jpg')
 
@@ -179,31 +213,26 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
       }
 
       const selfieFileId = uploadResponse.data.file_id
+      addDebugInfo(`Selfie uploaded successfully. File ID: ${selfieFileId}`)
 
-      // Step 2: Perform face verification
-      const verificationResponse = await axios.post('/api/services/face-verification', {
-        selfie_file_id: selfieFileId,
-        id_file_id: idFileId
+      // Step 2: Selfie uploaded successfully
+      // KYCAID will handle face verification when verification is created
+      setVerificationStatus({
+        status: 'selfie_uploaded',
+        message: 'Selfie captured and uploaded successfully. Face verification will be performed during the verification process.'
       })
 
-      setVerificationStatus(verificationResponse.data)
+      addDebugInfo('Proceeding to applicant form...')
+      
+      // Pass the selfie file ID to the next step
+      onVerificationComplete({
+        selfieFileId: selfieFileId
+      })
 
-      // Check if verification was successful
-      const isSuccess = verificationResponse.data?.status === 'approved' || 
-                       verificationResponse.data?.match_score > 0.7 ||
-                       verificationResponse.data?.liveness_status === 'passed'
-
-      if (isSuccess) {
-        onVerificationComplete({
-          selfieFileId: selfieFileId,
-          verificationResult: verificationResponse.data
-        })
-      } else {
-        setError('Face verification failed. Please try again.')
-      }
     } catch (err) {
-      setError(err.response?.data?.error?.message || err.message || 'Face verification failed')
-      console.error('Error during face verification:', err)
+      addDebugInfo(`ERROR: ${err.message}`)
+      setError(err.response?.data?.error?.message || err.message || 'Failed to upload selfie')
+      console.error('Error uploading selfie:', err)
     } finally {
       setLoading(false)
     }
@@ -226,59 +255,90 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
 
         {!capturedImage ? (
           <div className="camera-container" style={{ marginTop: '20px' }}>
-            {cameraReady ? (
-              <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  style={{
-                    width: '100%',
-                    maxWidth: '640px',
-                    maxHeight: '480px',
-                    borderRadius: '8px',
-                    backgroundColor: '#000',
-                    transform: 'scaleX(-1)', // Mirror the video for better UX
-                    display: 'block',
-                    margin: '0 auto'
-                  }}
-                />
-                <canvas ref={canvasRef} style={{ display: 'none' }} />
-                <button
-                  onClick={capturePhoto}
-                  className="submit-button"
-                  style={{ marginTop: '15px', display: 'block', marginLeft: 'auto', marginRight: 'auto' }}
-                >
-                  Capture Photo
-                </button>
-              </>
-            ) : (
-              <div className="camera-loading" style={{ 
-                padding: '40px', 
-                textAlign: 'center',
-                backgroundColor: '#f5f5f5',
-                borderRadius: '8px',
-                minHeight: '300px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'column'
-              }}>
-                <p style={{ fontSize: '16px', marginBottom: '10px' }}>Initializing camera...</p>
-                {error && (
-                  <p style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px' }}>{error}</p>
-                )}
-                {!error && (
+            {/* Video element always rendered but hidden when not ready */}
+            <div style={{ position: 'relative' }}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  width: '100%',
+                  maxWidth: '640px',
+                  maxHeight: '480px',
+                  borderRadius: '8px',
+                  backgroundColor: '#000',
+                  transform: 'scaleX(-1)', // Mirror the video for better UX
+                  display: cameraReady ? 'block' : 'none',
+                  margin: '0 auto'
+                }}
+              />
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
+              
+              {/* Loading/Error overlay */}
+              {!cameraReady && (
+                <div className="camera-loading" style={{ 
+                  padding: '40px', 
+                  textAlign: 'center',
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: '8px',
+                  minHeight: '300px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column'
+                }}>
+                  <p style={{ fontSize: '16px', marginBottom: '10px' }}>
+                    {error ? 'Camera initialization failed' : 'Initializing camera...'}
+                  </p>
+                  {error && (
+                    <p style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', marginBottom: '10px' }}>{error}</p>
+                  )}
                   <button
                     onClick={startCamera}
                     className="submit-button"
                     style={{ marginTop: '15px' }}
                   >
-                    Retry Camera Access
+                    {error ? 'Retry Camera Access' : 'Start Camera'}
                   </button>
-                )}
-              </div>
+                  
+                  {/* Debug information */}
+                  <details style={{ marginTop: '20px', textAlign: 'left', maxWidth: '500px' }}>
+                    <summary style={{ cursor: 'pointer', fontSize: '12px', color: '#666' }}>
+                      Show Debug Info
+                    </summary>
+                    <div style={{ 
+                      marginTop: '10px', 
+                      padding: '10px', 
+                      backgroundColor: '#fff',
+                      borderRadius: '4px',
+                      maxHeight: '200px',
+                      overflow: 'auto',
+                      fontSize: '11px',
+                      fontFamily: 'monospace'
+                    }}>
+                      {debugInfo.length === 0 ? (
+                        <p>No debug information yet</p>
+                      ) : (
+                        debugInfo.map((info, idx) => (
+                          <div key={idx} style={{ marginBottom: '4px' }}>{info}</div>
+                        ))
+                      )}
+                    </div>
+                  </details>
+                </div>
+              )}
+            </div>
+            
+            {/* Capture button - only show when camera is ready */}
+            {cameraReady && (
+              <button
+                onClick={capturePhoto}
+                className="submit-button"
+                style={{ marginTop: '15px', display: 'block', marginLeft: 'auto', marginRight: 'auto' }}
+              >
+                Capture Photo
+              </button>
             )}
           </div>
         ) : (
@@ -306,7 +366,7 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
                 className="submit-button"
                 disabled={loading}
               >
-                {loading ? 'Verifying...' : 'Verify Identity'}
+                {loading ? 'Uploading Selfie...' : 'Continue with This Selfie'}
               </button>
             </div>
           </div>
@@ -314,20 +374,9 @@ function FaceVerification({ idFileId, onVerificationComplete, onBack }) {
 
         {error && <div className="error-message">{error}</div>}
 
-        {verificationStatus && (
-          <div className="verification-result">
-            <h4>Verification Result:</h4>
-            <div className="result-details">
-              {verificationStatus.match_score && (
-                <p><strong>Match Score:</strong> {(verificationStatus.match_score * 100).toFixed(1)}%</p>
-              )}
-              {verificationStatus.liveness_status && (
-                <p><strong>Liveness Status:</strong> {verificationStatus.liveness_status}</p>
-              )}
-              {verificationStatus.status && (
-                <p><strong>Status:</strong> {verificationStatus.status}</p>
-              )}
-            </div>
+        {verificationStatus && verificationStatus.status === 'selfie_uploaded' && (
+          <div className="success-message" style={{ marginTop: '15px' }}>
+            <p>{verificationStatus.message}</p>
           </div>
         )}
 
